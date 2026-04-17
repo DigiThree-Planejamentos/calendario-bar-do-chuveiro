@@ -968,27 +968,31 @@ function saveToSite(){
 }
 
 // ── Export ──
-function exportHTML(){
-  persistSiteState(false);
-  const client=document.getElementById('hdrClient').innerText.trim();
-  const year=document.getElementById('hdrYear').innerText.trim();
-  const sub=document.getElementById('hdrSub').innerText.trim();
-  let src=document.documentElement.outerHTML;
-  src=src.replace(/(<span contenteditable="true" id="hdrClient"[^>]*>)[^<]*/,`$1${client}`);
-  src=src.replace(/(<em contenteditable="true" id="hdrYear"[^>]*>)[^<]*/,`$1${year}`);
-  src=src.replace(/(<span class="sub" contenteditable="true" id="hdrSub"[^>]*>)[^<]*/,`$1${sub}`);
-  src=src.replace(/let POSTS = \[[\s\S]*?\];/,`let POSTS = ${JSON.stringify(POSTS)};`);
-  src=src.replace(/let PLAN_DATA = \{[\s\S]*?\};/,`let PLAN_DATA = ${JSON.stringify(PLAN_DATA)};`);
-  src = src.replace(/\/\/ __SPECIALS_PATCH__[\s\S]*?\/\/ __END_SPECIALS_PATCH__/, '');
-  const specialsPatch = `// __SPECIALS_PATCH__\n` +
-    MONTHS_CONFIG.map((mc,i)=>`MONTHS_CONFIG[${i}].special=${JSON.stringify(mc.special)};MONTHS_CONFIG[${i}].notes=${JSON.stringify(mc.notes||'')};`).join('\n') +
-    `\n// __END_SPECIALS_PATCH__`;
+function exportHTML() {
+  const client = document.getElementById('hdrClient').innerText.trim();
+  const year = document.getElementById('hdrYear').innerText.trim();
+  
+  // Prepara o conteúdo atualizado
+  let src = document.documentElement.outerHTML;
+
+  // Substitui os dados antigos pelos novos dentro do código fonte
+  src = src.replace(/let POSTS = \[[\s\S]*?\];/, `let POSTS = ${JSON.stringify(POSTS)};`);
+  src = src.replace(/let PLAN_DATA = \{[\s\S]*?\};/, `let PLAN_DATA = ${JSON.stringify(PLAN_DATA)};`);
+  
+  // Patch para garantir que as notas e feriados também sejam salvos
+  const specialsPatch = MONTHS_CONFIG.map((mc, i) => 
+    `MONTHS_CONFIG[${i}].special=${JSON.stringify(mc.special)};MONTHS_CONFIG[${i}].notes=${JSON.stringify(mc.notes||'')};`
+  ).join('\n');
+  
   src = src.replace('// ── Init ──', specialsPatch + '\n// ── Init ──');
-  const slug=(client||'cliente').toLowerCase().replace(/\s+/g,'-');
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([src],{type:'text/html'}));
-  a.download=`calendario_editorial_${slug}_${year}.html`;a.click();
-  showToast('💾 HTML exportado com todas as edições e imagens!');
+
+  const slug = (client || 'cliente').toLowerCase().replace(/\s+/g, '-');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([src], { type: 'text/html' }));
+  a.download = `calendario_editorial_${slug}_${year}.html`;
+  a.click();
+  
+  showToast('💾 Arquivo atualizado com sucesso!');
 }
 
 function showToast(msg){
