@@ -943,6 +943,7 @@ function applySavedState(state){
 }
 
 function loadSavedState(){
+  localStorage.clear();
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return;
