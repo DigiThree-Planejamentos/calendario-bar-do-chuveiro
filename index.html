@@ -524,8 +524,6 @@ function updateStats(){
 // ── Build Month Nav ──
 function buildMonthNav(){
   const nav=document.getElementById('monthNav');
-  if(!nav) return;
-  nav.innerHTML='';
   MONTHS_CONFIG.forEach((mc,i)=>{
     const btn=document.createElement('button');
     btn.className='month-btn';
@@ -915,8 +913,16 @@ function saveDatas(){
 document.getElementById('datasMonthSel').addEventListener('change', renderDatasList);
 document.getElementById('datasOverlay').addEventListener('click', e=>{if(e.target===e.currentTarget)closeDatasModal();});
 
-// ── Persistência no site (localStorage) ──
+// ── Persistência local + salvamento no GitHub ──
 const STORAGE_KEY = 'calendario-editorial-bar-do-chuveiro-2026';
+const GITHUB_TOKEN_KEY = 'github_token_calendario_bar_do_chuveiro';
+const GITHUB_CONFIG = {
+  owner: 'digithree-planejamentos',
+  repo: 'calendario-bar-do-chuveiro',
+  path: 'index.html',
+  branch: 'main',
+  commitMessage: 'Atualiza calendário editorial'
+};
 
 function getCurrentState(){
   return {
@@ -945,123 +951,142 @@ function applySavedState(state){
   if(Array.isArray(state.monthSpecials)) state.monthSpecials.forEach((special,i)=>{ if(MONTHS_CONFIG[i]) MONTHS_CONFIG[i].special = special || {}; });
 }
 
-function collectCalendarState(){
-  return getCurrentState();
-}
-
-if(window.__PERSISTED_CALENDAR_STATE__){
-  applySavedState(window.__PERSISTED_CALENDAR_STATE__);
-}
-
-function jsonForInlineScript(value){
-  return JSON.stringify(value).replace(/<\//g,'<\/');
-}
-
-function utf8ToBase64(str){
-  const bytes = new TextEncoder().encode(str);
-  let binary = '';
-  const chunk = 0x8000;
-  for(let i=0;i<bytes.length;i+=chunk){
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+function loadSavedState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return;
+    applySavedState(JSON.parse(raw));
+  }catch(err){
+    console.error('Erro ao carregar dados salvos:', err);
+    showToast('Não foi possível carregar os dados salvos.');
   }
-  return btoa(binary);
-}
-
-function upsertPersistedStatePatch(html, state){
-  const patch = `<script id="persisted-calendar-state">
-window.__PERSISTED_CALENDAR_STATE__ = ${jsonForInlineScript(state)};
-if(typeof applySavedState === 'function'){ applySavedState(window.__PERSISTED_CALENDAR_STATE__); }
-<\/script>`;
-  if(/<script id="persisted-calendar-state">[\s\S]*?<\/script>/i.test(html)){
-    return html.replace(/<script id="persisted-calendar-state">[\s\S]*?<\/script>/i, patch);
-  }
-  return html.replace(/<\/body>/i, patch + '
-</body>');
-}
-
-function buildPersistentHtml(){
-  const client=document.getElementById('hdrClient').innerText.trim();
-  const year=document.getElementById('hdrYear').innerText.trim();
-  const sub=document.getElementById('hdrSub').innerText.trim();
-  let src=document.documentElement.outerHTML;
-  src=src.replace(/(<span contenteditable="true" id="hdrClient"[^>]*>)([\s\S]*?)(<\/span>)/,`$1${client}$3`);
-  src=src.replace(/(<em contenteditable="true" id="hdrYear"[^>]*>)([\s\S]*?)(<\/em>)/,`$1${year}$3`);
-  src=src.replace(/(<span class="sub" contenteditable="true" id="hdrSub"[^>]*>)([\s\S]*?)(<\/span>)/,`$1${sub}$3`);
-  src = upsertPersistedStatePatch(src, collectCalendarState());
-  return src;
 }
 
 function persistSiteState(showMessage=true){
-  if(showMessage) showToast('As alterações serão persistidas ao clicar em salvar.');
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(getCurrentState()));
+    if(showMessage) showToast('💾 Alterações salvas neste navegador.');
+  }catch(err){
+    console.error('Erro ao salvar dados:', err);
+    showToast('Não foi possível salvar as alterações.');
+  }
+}
+
+function getGitHubToken(){
+  let token = localStorage.getItem(GITHUB_TOKEN_KEY);
+  if(token) return token;
+  token = window.prompt('Cole seu token do GitHub com acesso ao repositório:');
+  if(token) localStorage.setItem(GITHUB_TOKEN_KEY, token.trim());
+  return token ? token.trim() : '';
 }
 
 function resetGitHubToken(){
+  localStorage.removeItem(GITHUB_TOKEN_KEY);
+  showToast('🔐 Token removido.');
+}
+
+function getPersistedStateScript(state){
+  return `<script>window.__PERSISTED_CALENDAR_STATE__ = ${JSON.stringify(state)};<\/script>`;
+}
+
+function buildPersistentHtml(){
+  const state = getCurrentState();
+  let src = document.documentElement.outerHTML;
+
+  src = src.replace(/<script>window\.__PERSISTED_CALENDAR_STATE__[\s\S]*?<\\\/script>\s*/g, '');
+  src = src.replace(/<script>window\.__PERSISTED_CALENDAR_STATE__[\s\S]*?<\/script>\s*/g, '');
+  src = src.replace('</body>', `  ${getPersistedStateScript(state)}\n</body>`);
+
+  return '<!DOCTYPE html>\n' + src;
+}
+
+function applyBootState(){
   try{
-    localStorage.removeItem('github_token');
-    showToast('Token do GitHub removido deste navegador.');
+    if(window.__PERSISTED_CALENDAR_STATE__) {
+      applySavedState(window.__PERSISTED_CALENDAR_STATE__);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(window.__PERSISTED_CALENDAR_STATE__));
+      return;
+    }
   }catch(err){
-    console.error(err);
-    showToast('Não foi possível remover o token.');
+    console.error('Erro ao aplicar estado embutido:', err);
   }
+  loadSavedState();
 }
 
 async function salvarAlteracoes(){
-  let token = localStorage.getItem('github_token');
-  if(!token){
-    token = prompt('Cole seu token do GitHub:');
-    if(!token) return;
-    localStorage.setItem('github_token', token);
-  }
-  const OWNER = 'DigiThree-Planejamentos';
-  const REPO = 'calendario-bar-do-chuveiro';
-  const BRANCH = 'main';
-  const PATH = 'index.html';
   try{
-    showToast('Salvando no GitHub...');
-    const apiBase = `https://api.github.com/repos/${encodeURIComponent(OWNER)}/${encodeURIComponent(REPO)}/contents/${PATH.split('/').map(encodeURIComponent).join('/')}`;
-    let sha = null;
-    const existing = await fetch(`${apiBase}?ref=${encodeURIComponent(BRANCH)}`, {
+    persistSiteState(false);
+    const token = getGitHubToken();
+    if(!token){
+      showToast('Token do GitHub não informado.');
+      return;
+    }
+
+    const { owner, repo, path, branch, commitMessage } = GITHUB_CONFIG;
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+
+    const getResp = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, {
       headers: {
-        'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json'
       }
     });
-    if(existing.status === 200){
-      const current = await existing.json();
-      sha = current.sha;
-    }else if(existing.status !== 404){
-      const errText = await existing.text();
-      throw new Error(`Erro ao buscar arquivo: ${errText}`);
+
+    if(!getResp.ok){
+      const errorText = await getResp.text();
+      console.error('Erro ao buscar SHA:', errorText);
+      showToast('Não foi possível acessar o arquivo no GitHub.');
+      return;
     }
+
+    const currentFile = await getResp.json();
     const html = buildPersistentHtml();
-    const body = {
-      message: 'Atualização via site',
-      content: utf8ToBase64(html),
-      branch: BRANCH
-    };
-    if(sha) body.sha = sha;
-    const update = await fetch(apiBase, {
+    const content = btoa(unescape(encodeURIComponent(html)));
+
+    const putResp = await fetch(apiUrl, {
       method: 'PUT',
       headers: {
-        'Accept': 'application/vnd.github+json',
         'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        message: commitMessage,
+        content,
+        sha: currentFile.sha,
+        branch
+      })
     });
-    if(!update.ok){
-      const errText = await update.text();
-      throw new Error(`Erro ao salvar no GitHub: ${errText}`);
+
+    if(!putResp.ok){
+      const errorText = await putResp.text();
+      console.error('Erro ao salvar no GitHub:', errorText);
+      showToast('Erro ao salvar alterações no GitHub.');
+      return;
     }
+
     showToast('✅ Alterações salvas no GitHub!');
   }catch(err){
-    console.error(err);
-    showToast(err && err.message ? err.message : '❌ Não foi possível salvar no GitHub.');
+    console.error('Erro geral ao salvar no GitHub:', err);
+    showToast('Erro ao salvar no GitHub.');
   }
 }
 
 function saveToSite(){
   salvarAlteracoes();
+}
+
+// ── Export ──
+function exportHTML(){
+  persistSiteState(false);
+  const client=document.getElementById('hdrClient').innerText.trim();
+  const year=document.getElementById('hdrYear').innerText.trim();
+  const html = buildPersistentHtml();
+  const slug=(client||'cliente').toLowerCase().replace(/\s+/g,'-');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([html],{type:'text/html'}));
+  a.download=`calendario_editorial_${slug}_${year}.html`;a.click();
+  showToast('💾 HTML exportado com todas as edições e imagens!');
 }
 
 function showToast(msg){
@@ -1072,6 +1097,7 @@ function showToast(msg){
 document.getElementById('modalOverlay').addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
 
 // ── Init ──
+applyBootState();
 ['hdrClient','hdrYear','hdrSub'].forEach(id=>{
   const el=document.getElementById(id);
   ['input','blur'].forEach(evt=>el.addEventListener(evt,()=>persistSiteState(false)));
@@ -1090,70 +1116,6 @@ const observer = new IntersectionObserver((entries)=>{
   });
 },{threshold:0.15});
 document.querySelectorAll('.month-block').forEach(el=>observer.observe(el));
-</script>
-  <script>
-async function salvarAlteracoes() {
-  const token = localStorage.getItem("github_token") || prompt("Cole seu token do GitHub:");
-
-  if (!token) {
-    alert("Token não informado.");
-    return;
-  }
-
-  localStorage.setItem("github_token", token);
-
-  const owner = "digithree-planejamentos";
-  const repo = "calendario-bar-do-chuveiro";
-  const path = "index.html";
-  const branch = "main";
-
-  try {
-    // 1. Buscar SHA atual do arquivo
-    const getRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
-      headers: { Authorization: `token ${token}` }
-    });
-
-    const getData = await getRes.json();
-
-    // 2. Pegar HTML atual da página
-    const html = document.documentElement.outerHTML;
-
-    // 3. Converter para base64
-    const content = btoa(unescape(encodeURIComponent(html)));
-
-    // 4. Enviar atualização
-    const putRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
-      method: "PUT",
-      headers: {
-        Authorization: `token ${token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        message: "Atualização do calendário",
-        content: content,
-        sha: getData.sha,
-        branch: branch
-      })
-    });
-
-    if (putRes.ok) {
-      alert("Alterações salvas no GitHub com sucesso!");
-    } else {
-      const err = await putRes.json();
-      console.error(err);
-      alert("Erro ao salvar no GitHub.");
-    }
-
-  } catch (e) {
-    console.error(e);
-    alert("Erro na conexão com GitHub.");
-  }
-}
-
-function resetGitHubToken() {
-  localStorage.removeItem("github_token");
-  alert("Token removido.");
-}
 </script>
 </body>
 </html>
