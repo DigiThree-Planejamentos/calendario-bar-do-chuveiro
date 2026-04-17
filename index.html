@@ -240,7 +240,7 @@
 <div class="toolbar">
   <span class="toolbar-label">Ações:</span>
   <button class="btn btn-cyan" onclick="window.print()">🖨 Imprimir</button>
-  <button class="btn btn-cyan" onclick="exportHTML()">💾 Salvar alterações</button>
+  <button class="btn btn-ghost" onclick="saveToSite()">💾 Salvar no site</button>
   <button class="btn btn-ghost" id="editModeBtn" onclick="toggleEditMode()">✏️ Modo Edição</button>
   <button class="btn btn-ghost" onclick="openDatasModal()">🗓 Datas Comemorativas</button>
   <div class="month-nav" id="monthNav"></div>
@@ -912,15 +912,36 @@ function saveDatas(){
 document.getElementById('datasMonthSel').addEventListener('change', renderDatasList);
 document.getElementById('datasOverlay').addEventListener('click', e=>{if(e.target===e.currentTarget)closeDatasModal();});
 
-// ── Persistência no site (localStorage) ──
+// ── Persistência local + GitHub ──
 const STORAGE_KEY = 'calendario-editorial-bar-do-chuveiro-2026';
+const GITHUB_CONFIG = {
+  owner: 'digithree-planejamentos',
+  repo: 'calendario-bar-do-chuveiro',
+  path: 'index.html',
+  branch: 'main',
+  tokenStorageKey: 'github_token_calendario_bar_do_chuveiro'
+};
+
+function utf8ToBase64(str){
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for(let i=0;i<bytes.length;i+=chunkSize){
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function jsonForInlineScript(value){
+  return JSON.stringify(value).replace(/<\//g,'<\\/');
+}
 
 function getCurrentState(){
   return {
     header:{
-      client:document.getElementById('hdrClient').innerText.trim(),
-      year:document.getElementById('hdrYear').innerText.trim(),
-      sub:document.getElementById('hdrSub').innerText.trim()
+      client:document.getElementById('hdrClient').innerHTML.trim(),
+      year:document.getElementById('hdrYear').innerHTML.trim(),
+      sub:document.getElementById('hdrSub').innerHTML.trim()
     },
     posts:POSTS,
     planData:PLAN_DATA,
@@ -929,12 +950,16 @@ function getCurrentState(){
   };
 }
 
+function collectCalendarState(){
+  return getCurrentState();
+}
+
 function applySavedState(state){
   if(!state) return;
   if(state.header){
-    if(state.header.client!==undefined) document.getElementById('hdrClient').innerText = state.header.client;
-    if(state.header.year!==undefined) document.getElementById('hdrYear').innerText = state.header.year;
-    if(state.header.sub!==undefined) document.getElementById('hdrSub').innerText = state.header.sub;
+    if(state.header.client!==undefined) document.getElementById('hdrClient').innerHTML = state.header.client;
+    if(state.header.year!==undefined) document.getElementById('hdrYear').innerHTML = state.header.year;
+    if(state.header.sub!==undefined) document.getElementById('hdrSub').innerHTML = state.header.sub;
   }
   if(Array.isArray(state.posts)) POSTS = state.posts.map(p => ({...p, imgs:p.imgs||[], caption:p.caption||'', descricao:p.descricao||'', imgObs:p.imgObs||'', roteiro:p.roteiro||'', videoLink:p.videoLink||'', slides:p.slides||'', slidesNum:p.slidesNum||'', postado:!!p.postado}));
   if(state.planData && typeof state.planData === 'object') PLAN_DATA = state.planData;
@@ -943,8 +968,10 @@ function applySavedState(state){
 }
 
 function loadSavedState(){
-  localStorage.clear();
   try{
+    if(window.__PERSISTED_CALENDAR_STATE__){
+      applySavedState(window.__PERSISTED_CALENDAR_STATE__);
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return;
     applySavedState(JSON.parse(raw));
@@ -957,43 +984,103 @@ function loadSavedState(){
 function persistSiteState(showMessage=true){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(getCurrentState()));
-    if(showMessage) showToast('💾 Alterações salvas no site neste navegador.');
+    if(showMessage) showToast('💾 Alterações salvas neste navegador.');
   }catch(err){
     console.error('Erro ao salvar dados:', err);
-    showToast('Não foi possível salvar as alterações.');
+    showToast('Não foi possível salvar as alterações localmente.');
   }
 }
 
-function saveToSite(){
-  persistSiteState(true);
+function getGitHubToken(forceReset=false){
+  const key = GITHUB_CONFIG.tokenStorageKey;
+  if(forceReset) localStorage.removeItem(key);
+  let token = localStorage.getItem(key);
+  if(token) return token;
+
+  token = window.prompt('Cole aqui o seu token do GitHub com acesso ao repositório "' + GITHUB_CONFIG.repo + '":');
+  if(!token) return '';
+  token = token.trim();
+  if(token) localStorage.setItem(key, token);
+  return token;
 }
 
-// ── Export ──
-function exportHTML() {
-  const client = document.getElementById('hdrClient').innerText.trim();
-  const year = document.getElementById('hdrYear').innerText.trim();
-  
-  // Prepara o conteúdo atualizado
-  let src = document.documentElement.outerHTML;
+function buildPersistentHtml(){
+  const state = collectCalendarState();
+  let html = document.documentElement.outerHTML;
 
-  // Substitui os dados antigos pelos novos dentro do código fonte
-  src = src.replace(/let POSTS = \[[\s\S]*?\];/, `let POSTS = ${JSON.stringify(POSTS)};`);
-  src = src.replace(/let PLAN_DATA = \{[\s\S]*?\};/, `let PLAN_DATA = ${JSON.stringify(PLAN_DATA)};`);
-  
-  // Patch para garantir que as notas e feriados também sejam salvos
-  const specialsPatch = MONTHS_CONFIG.map((mc, i) => 
-    `MONTHS_CONFIG[${i}].special=${JSON.stringify(mc.special)};MONTHS_CONFIG[${i}].notes=${JSON.stringify(mc.notes||'')};`
-  ).join('\n');
-  
-  src = src.replace('// ── Init ──', specialsPatch + '\n// ── Init ──');
+  html = html.replace(/<script id="persisted-calendar-state">[\s\S]*?<\/script>\s*/,'');
+  const patch = '\n<script id="persisted-calendar-state">\n' +
+    'window.__PERSISTED_CALENDAR_STATE__ = ' + jsonForInlineScript(state) + ';\n' +
+    '<\/script>\n';
 
-  const slug = (client || 'cliente').toLowerCase().replace(/\s+/g, '-');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([src], { type: 'text/html' }));
-  a.download = `calendario_editorial_${slug}_${year}.html`;
-  a.click();
-  
-  showToast('💾 Arquivo atualizado com sucesso!');
+  if(/<\/body>/i.test(html)){
+    html = html.replace(/<\/body>/i, patch + '</body>');
+  }else{
+    html += patch;
+  }
+  return html;
+}
+
+async function getGitHubFileMeta(token){
+  const url = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${encodeURIComponent(GITHUB_CONFIG.path)}?ref=${encodeURIComponent(GITHUB_CONFIG.branch)}`;
+  const response = await fetch(url,{
+    headers:{
+      'Authorization':'Bearer ' + token,
+      'Accept':'application/vnd.github+json'
+    }
+  });
+
+  if(response.status === 404) return {sha:null};
+  if(!response.ok){
+    const text = await response.text();
+    throw new Error(`Falha ao buscar arquivo no GitHub (${response.status}). ${text}`);
+  }
+  return await response.json();
+}
+
+async function saveToSite(){
+  persistSiteState(false);
+
+  const token = getGitHubToken();
+  if(!token){
+    showToast('Token do GitHub não informado.');
+    return;
+  }
+
+  try{
+    const html = buildPersistentHtml();
+    const meta = await getGitHubFileMeta(token);
+
+    const payload = {
+      message: 'Atualiza calendário editorial do Bar do Chuveiro',
+      content: utf8ToBase64(html),
+      branch: GITHUB_CONFIG.branch
+    };
+
+    if(meta && meta.sha) payload.sha = meta.sha;
+
+    const url = `https://api.github.com/repos/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/contents/${encodeURIComponent(GITHUB_CONFIG.path)}`;
+    const response = await fetch(url,{
+      method:'PUT',
+      headers:{
+        'Authorization':'Bearer ' + token,
+        'Accept':'application/vnd.github+json',
+        'Content-Type':'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if(!response.ok){
+      const text = await response.text();
+      throw new Error(`Falha ao salvar no GitHub (${response.status}). ${text}`);
+    }
+
+    localStorage.removeItem(STORAGE_KEY);
+    showToast('✅ Alterações salvas no site com sucesso!');
+  }catch(err){
+    console.error('Erro ao salvar no GitHub:', err);
+    showToast('Erro ao salvar no GitHub. Verifique token, repositório e permissões.');
+  }
 }
 
 function showToast(msg){
