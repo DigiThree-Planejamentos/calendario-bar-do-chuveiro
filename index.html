@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Calendário Editorial 2026</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<!-- Supabase SDK -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
     --navy:#0d1b2a;--navy-mid:#1a3350;--blue:#1d5fa8;--blue-light:#3b82c4;
@@ -219,6 +217,7 @@
 
   @media print{.toolbar,.add-post-btn,.card-actions,.add-thumb-btn{display:none!important;}body{background:#fff;}.post-card{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -243,7 +242,6 @@
   <span class="toolbar-label">Ações:</span>
   <button class="btn btn-cyan" onclick="window.print()">🖨 Imprimir</button>
   <button class="btn btn-ghost" onclick="saveToSite()">💾 Salvar no site</button>
-  <button class="btn btn-ghost" id="btnNuvem" onclick="salvarAlteracoes()">☁️ Salvar na Nuvem</button>
   <button class="btn btn-ghost" id="editModeBtn" onclick="toggleEditMode()">✏️ Modo Edição</button>
   <button class="btn btn-ghost" onclick="openDatasModal()">🗓 Datas Comemorativas</button>
   <div class="month-nav" id="monthNav"></div>
@@ -387,15 +385,6 @@
 <div class="toast" id="toast"></div>
 
 <script>
-// ─────────────────────────────────────────────
-//  SUPABASE — configuração (troque pelas suas credenciais)
-// ─────────────────────────────────────────────
-const SUPABASE_URL      = 'https://aprneolltdkizvfakuus.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_tmWBQV8mZnk7FBvq1iZ3pA_lprGokcu';
-const supabase          = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-const CALENDAR_ID       = 'calendario-bar-do-chuveiro';
-const CALENDAR_NAME     = 'Bar do Chuveiro — Calendário Editorial';
-
 // ─────────────────────────────────────────────
 //  DATA STRUCTURES
 // ─────────────────────────────────────────────
@@ -924,108 +913,125 @@ function saveDatas(){
 document.getElementById('datasMonthSel').addEventListener('change', renderDatasList);
 document.getElementById('datasOverlay').addEventListener('click', e=>{if(e.target===e.currentTarget)closeDatasModal();});
 
-// ── Persistência no site (localStorage) ──
+// ─────────────────────────────────────────────
+//  PERSISTÊNCIA DO SITE (SUPABASE + BACKUP LOCAL)
+// ─────────────────────────────────────────────
 const STORAGE_KEY = 'calendario-editorial-bar-do-chuveiro-2026';
+const SUPABASE_URL = 'https://aprneolltdkizvfakuus.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_tmWBQV8mZnk7FBvq1iZ3pA_lprGokcu';
+const CALENDAR_ID = 'bar-do-chuveiro-2026';
+const CALENDAR_NAME = 'Calendário Editorial Bar do Chuveiro 2026';
+const SUPABASE_TABLE = 'calendarios';
+
+const supabaseClient = (window.supabase && typeof window.supabase.createClient === 'function')
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
 
 function getCurrentState(){
   return {
     header:{
-      client:document.getElementById('hdrClient').innerText.trim(),
-      year:document.getElementById('hdrYear').innerText.trim(),
-      sub:document.getElementById('hdrSub').innerText.trim()
+      client:document.getElementById('hdrClient').innerHTML,
+      year:document.getElementById('hdrYear').innerHTML,
+      sub:document.getElementById('hdrSub').innerHTML
     },
     posts:POSTS,
     planData:PLAN_DATA,
     monthNotes:MONTHS_CONFIG.map(mc=>mc.notes||''),
-    monthSpecials:MONTHS_CONFIG.map(mc=>mc.special||{})
+    monthSpecials:MONTHS_CONFIG.map(mc=>mc.special||{}),
+    savedAt:new Date().toISOString()
   };
 }
 
 function applySavedState(state){
-  if(!state) return;
+  if(!state) return false;
   if(state.header){
-    if(state.header.client!==undefined) document.getElementById('hdrClient').innerText = state.header.client;
-    if(state.header.year!==undefined) document.getElementById('hdrYear').innerText = state.header.year;
-    if(state.header.sub!==undefined) document.getElementById('hdrSub').innerText = state.header.sub;
+    if(state.header.client!==undefined) document.getElementById('hdrClient').innerHTML = state.header.client;
+    if(state.header.year!==undefined) document.getElementById('hdrYear').innerHTML = state.header.year;
+    if(state.header.sub!==undefined) document.getElementById('hdrSub').innerHTML = state.header.sub;
   }
   if(Array.isArray(state.posts)) POSTS = state.posts.map(p => ({...p, imgs:p.imgs||[], caption:p.caption||'', descricao:p.descricao||'', imgObs:p.imgObs||'', roteiro:p.roteiro||'', videoLink:p.videoLink||'', slides:p.slides||'', slidesNum:p.slidesNum||'', postado:!!p.postado}));
   if(state.planData && typeof state.planData === 'object') PLAN_DATA = state.planData;
   if(Array.isArray(state.monthNotes)) state.monthNotes.forEach((note,i)=>{ if(MONTHS_CONFIG[i]) MONTHS_CONFIG[i].notes = note || ''; });
   if(Array.isArray(state.monthSpecials)) state.monthSpecials.forEach((special,i)=>{ if(MONTHS_CONFIG[i]) MONTHS_CONFIG[i].special = special || {}; });
+  if(typeof renderAll === 'function') renderAll();
+  if(typeof attachMonthObserver === 'function') attachMonthObserver();
+  if(typeof updateStats === 'function') updateStats();
+  return true;
 }
 
-function loadSavedState(){
+function saveLocalBackup(payload){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    return true;
+  }catch(err){
+    console.error('Erro ao salvar backup local:', err);
+    return false;
+  }
+}
+
+function loadLocalBackup(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return;
-    applySavedState(JSON.parse(raw));
+    if(!raw) return false;
+    return applySavedState(JSON.parse(raw));
   }catch(err){
     console.error('Erro ao carregar dados salvos:', err);
     showToast('Não foi possível carregar os dados salvos.');
+    return false;
   }
 }
 
-function persistSiteState(showMessage=true){
+function persistSiteState(showMessage=false){
+  const payload = getCurrentState();
+  saveLocalBackup(payload);
+  if(showMessage) showToast('💾 Alterações salvas neste navegador.');
+}
+
+async function saveToSite(){
+  const payload = getCurrentState();
+  saveLocalBackup(payload);
+
+  if(!supabaseClient){
+    showToast('⚠️ Salvo no navegador. Supabase indisponível.');
+    return false;
+  }
+
   try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(getCurrentState()));
-    if(showMessage) showToast('💾 Alterações salvas no site neste navegador.');
+    const { error } = await supabaseClient
+      .from(SUPABASE_TABLE)
+      .upsert({
+        id: CALENDAR_ID,
+        nome: CALENDAR_NAME,
+        dados: payload
+      }, { onConflict: 'id' });
+
+    if(error) throw error;
+    showToast('✅ Alterações salvas no Supabase!');
+    return true;
   }catch(err){
-    console.error('Erro ao salvar dados:', err);
-    showToast('Não foi possível salvar as alterações.');
+    console.error('Erro ao salvar no Supabase:', err);
+    showToast('⚠️ Salvo no navegador, mas falhou no Supabase.');
+    return false;
   }
 }
 
-function saveToSite(){
-  persistSiteState(true);
-}
+async function loadSiteData(){
+  if(supabaseClient){
+    try{
+      const { data, error } = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select('dados')
+        .eq('id', CALENDAR_ID)
+        .maybeSingle();
 
-// ── Persistência Supabase ──
-async function salvarAlteracoes() {
-  const btn = document.getElementById('btnNuvem');
-  if (btn) { btn.textContent = '⏳ Salvando…'; btn.disabled = true; }
-  try {
-    const state = getCurrentState();
-    const { error } = await supabase
-      .from('calendarios')
-      .upsert(
-        { id: CALENDAR_ID, nome: CALENDAR_NAME, dados: state, updated_at: new Date().toISOString() },
-        { onConflict: 'id' }
-      );
-    if (error) {
-      console.error('Supabase salvar:', error);
-      showToast('❌ Erro ao salvar na nuvem: ' + error.message);
-    } else {
-      showToast('☁️ Salvo na nuvem com sucesso!');
+      if(error) throw error;
+      if(data && data.dados) return applySavedState(data.dados);
+    }catch(err){
+      console.error('Erro ao carregar do Supabase:', err);
     }
-  } catch (err) {
-    console.error('salvarAlteracoes:', err);
-    showToast('❌ Erro inesperado ao salvar na nuvem.');
-  } finally {
-    if (btn) { btn.textContent = '☁️ Salvar na Nuvem'; btn.disabled = false; }
   }
-}
 
-async function carregarAlteracoes() {
-  try {
-    const { data, error } = await supabase
-      .from('calendarios')
-      .select('*')
-      .eq('id', CALENDAR_ID)
-      .maybeSingle();
-    if (error) {
-      console.error('Supabase carregar:', error);
-      return;
-    }
-    if (data && data.dados) {
-      applySavedState(data.dados);
-      renderAll();
-      updateStats();
-      buildMonthNav();
-      showToast('☁️ Dados carregados da nuvem!');
-    }
-  } catch (err) {
-    console.error('carregarAlteracoes:', err);
-  }
+  return loadLocalBackup();
 }
 
 // ── Export ──
@@ -1060,32 +1066,59 @@ function showToast(msg){
 document.getElementById('modalOverlay').addEventListener('click',e=>{if(e.target===e.currentTarget)closeModal();});
 
 // ── Init ──
-loadSavedState();
+buildMonthNav();
+renderAll();
+
+let monthObserver = null;
+function attachMonthObserver(){
+  if(monthObserver) monthObserver.disconnect();
+  monthObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        const id=e.target.id;
+        const idx=parseInt(id.replace('month-',''));
+        document.querySelectorAll('.month-btn').forEach((b,i)=>b.classList.toggle('active',i===idx));
+      }
+    });
+  },{threshold:0.15});
+  document.querySelectorAll('.month-block').forEach(el=>monthObserver.observe(el));
+}
+attachMonthObserver();
+
 ['hdrClient','hdrYear','hdrSub'].forEach(id=>{
   const el=document.getElementById(id);
   ['input','blur'].forEach(evt=>el.addEventListener(evt,()=>persistSiteState(false)));
 });
-buildMonthNav();
-renderAll();
 
-// Intersection observer to highlight active month in nav
-const observer = new IntersectionObserver((entries)=>{
-  entries.forEach(e=>{
-    if(e.isIntersecting){
-      const id=e.target.id;
-      const idx=parseInt(id.replace('month-',''));
-      document.querySelectorAll('.month-btn').forEach((b,i)=>b.classList.toggle('active',i===idx));
-    }
-  });
-},{threshold:0.15});
-document.querySelectorAll('.month-block').forEach(el=>observer.observe(el));
+document.addEventListener('input', function(e){
+  if(
+    e.target.matches('[contenteditable="true"]') ||
+    e.target.matches('.plan-input') ||
+    e.target.matches('.post-title') ||
+    e.target.matches('.month-notes')
+  ){
+    persistSiteState(false);
+  }
+});
 
-// ── Carregar dados da nuvem após init local ──
-// (sobrescreve o localStorage se encontrar dados mais recentes no Supabase)
-(async () => {
-  if (SUPABASE_URL.includes('SEU_PROJECT_ID')) return; // placeholder não configurado
-  await carregarAlteracoes();
-})();
+document.addEventListener('blur', function(e){
+  if(
+    e.target.matches('[contenteditable="true"]') ||
+    e.target.matches('.plan-input') ||
+    e.target.matches('.post-title') ||
+    e.target.matches('.month-notes')
+  ){
+    persistSiteState(false);
+  }
+}, true);
+
+window.addEventListener('beforeunload', function(){
+  try { persistSiteState(false); } catch(e) {}
+});
+
+setTimeout(async function(){
+  await loadSiteData();
+}, 0);
 </script>
 </body>
 </html>
